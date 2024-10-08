@@ -1,0 +1,15 @@
+namespace: sense
+name: frr
+version: 1.0.0
+readme: README.md
+authors:
+- Justas Balcas <juztas@gmail.com>
+description: Ansible Network Collections for FRR
+license_file: LICENCE
+tags: [FRR, networking]
+dependencies:
+  ansible.netcommon: '>=1.0.0'
+repository: https://github.com/sdn-sense/sense-frr-collection
+documentation: https://github.com/sdn-sense/sense-frr-collection
+homepage: https://github.com/sdn-sense/sense-frr-collection
+issues: https://github.com/sdn-sense/sense-frr-collection

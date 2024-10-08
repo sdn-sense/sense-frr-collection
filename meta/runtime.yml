@@ -1,0 +1,9 @@
+plugin_routing:
+  action:
+    frr_config:
+      redirect: sense.frr.frr
+    frr_facts:
+      redirect: sense.frr.frr
+    frr_command:
+      redurect: sense.frr.frr
+
