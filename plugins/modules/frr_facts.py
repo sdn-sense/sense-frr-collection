@@ -186,7 +186,7 @@ class Interfaces(FactsBase):
 
     def _getlldp(self, _iface):
         """Get LLDP"""
-        self.facts["lldp"] = []
+        self.facts["lldp"] = {}
 
     def _addSwitchPort(self, iface):
         """Add Switch Port"""
