@@ -36,7 +36,6 @@ def normalizeIPAddress(ipInput):
 
 def externalCommand(command):
     """Execute External Commands and return stdout and stderr."""
-    print(command)
     command = shlex.split(command)
     with subprocess.Popen(
             command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
@@ -109,7 +108,6 @@ class FrrCmd:
                 iface = line.split()[1]
                 ifacespl = iface.split('.')
                 if len(ifacespl) == 2:
-                    print(self.config)
                     inD = self.config.setdefault(f'Vlan{ifacespl[1]}', {})
                     inT = inD.setdefault('tagged_members', [])
                     if iface not in inT:
@@ -494,7 +492,6 @@ class Main:
 
     def parseArgs(self, inFile):
         """Parse Args from input file"""
-        print(inFile)
         if not os.path.isfile(inFile):
             raise Exception("Input File from param does not exist on Device.")
         params = {"debug": r"frr_debug=(\S+)", "config": r"frr_config=(\S+)"}
