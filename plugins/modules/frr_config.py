@@ -42,6 +42,7 @@ def externalCommand(command):
     ) as proc:
         stdout, stderr = proc.communicate()
         exitCode = proc.wait()
+        # TODO: That should log error
         #if exitCode != 0:
         #    raise Exception(
         #        f"{command} exited non-zero. Exit: {exitCode} Stdout: {stdout} Stderr: {stderr}"
@@ -509,7 +510,7 @@ class Main:
         for key, val in sensevlans.items():
             tmpKey = key.split(" ")
             if len(tmpKey) == 1:
-                tmpD = {"vlan": "".join(key), "vlanid": key[-4:]}
+                tmpD = {"vlan": "".join(key), "vlanid": key[4:]}
             else:
                 tmpD = {"vlan": "".join(tmpKey), "vlanid": tmpKey[1]}
             tmpD["interface"] = list(val.get("tagged_members", {}).keys())[0]
