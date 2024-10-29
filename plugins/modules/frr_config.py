@@ -17,6 +17,7 @@ from ipaddress import ip_network
 
 # TODO: Make it configurable
 vtyshcmd = "docker exec -i frr vtysh"
+vppshcmd = "docker exec -i vpp vppctl"
 defmtu = 9000
 deftxqueuelen = 10000
 
@@ -37,16 +38,11 @@ def normalizeIPAddress(ipInput):
 def externalCommand(command):
     """Execute External Commands and return stdout and stderr."""
     command = shlex.split(command)
-    with subprocess.Popen(
-            command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
-    ) as proc:
+    with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as proc:
         stdout, stderr = proc.communicate()
         exitCode = proc.wait()
-        # TODO: That should log error
-        #if exitCode != 0:
-        #    raise Exception(
-        #        f"{command} exited non-zero. Exit: {exitCode} Stdout: {stdout} Stderr: {stderr}"
-        #    )
+        if exitCode != 0:
+            stderr = [f"Error: {command} exited non-zero. Exit: {exitCode}"] + stderr.decode("utf-8").split("\n")
         return [stdout, stderr, exitCode]
     return ["", "", -1]
 
@@ -55,9 +51,8 @@ def sendviaStdIn(maincmd, commands):
     """Send commands to maincmd stdin"""
     if not isinstance(maincmd, list):
         maincmd = shlex.split(maincmd)
-    with subprocess.Popen(
-            maincmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE
-    ) as mainProc:
+    with subprocess.Popen(maincmd, stdin=subprocess.PIPE) as mainProc:
+        print(1)
         singlecmd = ""
         for cmd in commands:
             singlecmd += f"{cmd}\n"
@@ -91,15 +86,67 @@ def loadJson(infile):
                 out[splline[0]] = strtojson(splline[1])
     return out
 
-
-class FrrCmd:
-    """Frr CMD Executor API"""
-
+class VppCmd:
+    """VPP CMD Executor API"""
     def __init__(self):
+        self.active = False
+        self.__checkVpp()
+
+    def __checkVpp(self):
+        """Check if VPP is active"""
+        self.active = True
+        out = externalCommand(f"sudo {vppshcmd} show int")
+        if out[2] != 0:
+            self.active = False
+
+    def addVlan(self, **kwargs):
+        """Add Vlan if not present"""
+        out = externalCommand(f"sudo {vppshcmd} create sub-interfaces {kwargs['interface']} {kwargs['vlanid']}")
+        if out[2] != 0:
+            raise Exception(f"Failed to add Vlan {kwargs['vlanid']} to {kwargs['interface']}")
+        self._confVlan(**kwargs)
+
+    def _confVlan(self, **kwargs):
+        """Configure Vlan"""
+        out = externalCommand(f"sudo {vppshcmd} set interface state {kwargs['interface']}.{kwargs['vlanid']} up")
+        if out[2] != 0:
+            raise Exception(f"Failed to set Vlan {kwargs['vlanid']} to up")
+
+    def addIP(self, **kwargs):
+        """Add IP if not present"""
+        out = externalCommand(f"sudo {vppshcmd} set interface ip address {kwargs['interface']}.{kwargs['vlanid']} {kwargs['ip']}")
+        if out[2] != 0:
+            raise Exception(f"Failed to add IP {kwargs['ip']} to {kwargs['interface']}.{kwargs['vlanid']}")
+
+    def delVlan(self, **kwargs):
+        """Delete Vlan if present"""
+        out = externalCommand(f"sudo {vppshcmd} delete sub-interface {kwargs['interface']}.{kwargs['vlanid']}")
+        if out[2] != 0:
+            raise Exception(f"Failed to delete Vlan {kwargs['vlanid']} to {kwargs['interface']}")
+
+    def delIP(self, **kwargs):
+        """Delete IP if present"""
+        out = externalCommand(f"sudo {vppshcmd} set interface ip address del {kwargs['interface']}.{kwargs['vlanid']} {kwargs['ip']}")
+        if out[2] != 0:
+            raise Exception(f"Failed to delete IP {kwargs['ip']} to {kwargs['interface']}.{kwargs['vlanid']}")
+
+
+class IPCmd:
+    """IP CMD Executor API"""
+    def __init__(self):
+        self.active = False
         self.config = {}
         self.needRefresh = True
         self.module_stdout = []
         self.module_stderr = []
+        self.checkIP()
+
+    def checkIP(self):
+        """Check if IP is active"""
+        self.active = True
+        out = externalCommand("ip -o addr show")
+        if out[2] != 0:
+            self.active = False
 
     def generateFrrDict(self):
         """Generate all Vlan Info for comparison with SENSE FE Entries"""
@@ -138,7 +185,7 @@ class FrrCmd:
             self.generateFrrDict()
             self.needRefresh = False
 
-    def _addVlan(self, **kwargs):
+    def addVlan(self, **kwargs):
         """Add Vlan if not present"""
         self.__refreshConfig()
         if kwargs["vlan"] not in self.config:
@@ -154,25 +201,25 @@ class FrrCmd:
                     f"sudo ip link set dev {kwargs['interface']}.{kwargs['vlanid']} txqueuelen {deftxqueuelen}"]:
             self.__executeCommand(cmd)
 
-    def _addIP(self, **kwargs):
+    def addIP(self, **kwargs):
         """Add IP if not present"""
-        self._addVlan(**kwargs)
+        self.addVlan(**kwargs)
         self.__refreshConfig()
         if kwargs["ip"] not in self.config.get(kwargs["vlanid"], {}).get("ips", []):
             cmd = f"sudo ip addr add {kwargs['ip']} broadcast {getBroadCast(kwargs['ip'])} dev {kwargs['interface']}.{kwargs['vlanid']}"
             self.__executeCommand(cmd)
 
-    def _delVlan(self, **kwargs):
+    def delVlan(self, **kwargs):
         """Del Vlan if present. Del All Members, IPs too (required)"""
         # First we need to clean all IPs and tagged members from VLAN
-        self._delIP(**kwargs)
+        self.delIP(**kwargs)
         self.__refreshConfig()
         if kwargs["vlan"] in self.config:
             for cmd in [f"sudo ip link set dev {kwargs['interface']}.{kwargs['vlanid']} down",
                         f"sudo ip link delete dev {kwargs['interface']}.{kwargs['vlanid']}"]:
                 self.__executeCommand(cmd)
 
-    def _delIP(self, **kwargs):
+    def delIP(self, **kwargs):
         """Del IP if not present"""
         self.__refreshConfig()
         if "ip" in kwargs:
@@ -186,8 +233,34 @@ class FrrCmd:
         else:
             for delip in self.config.get(kwargs["vlan"], {}).get("ips", []):
                 kwargs["ip"] = delip
-                self._delIP(**kwargs)
+                self.delIP(**kwargs)
 
+
+
+
+class FrrCmd:
+    """Frr CMD Executor API"""
+
+    def __init__(self):
+        self.controller = VppCmd()
+        if not self.controller.active:
+            self.controller = IPCmd()
+    def addVlan(self, **kwargs):
+        """Add Vlan if not present"""
+        self.controller.addVlan(**kwargs)
+
+    def addIP(self, **kwargs):
+        """Add IP if not present"""
+        self.controller.addIP(**kwargs)
+
+    def delVlan(self, **kwargs):
+        """Del Vlan if present. Del All Members, IPs too (required)"""
+        self.controller.delVlan(**kwargs)
+
+
+    def delIP(self, **kwargs):
+        """Del IP if not present"""
+        self.controller.delIP(**kwargs)
 
 class vtyshParser:
     """Vtysh running config parser"""
@@ -516,17 +589,17 @@ class Main:
             tmpD["interface"] = list(val.get("tagged_members", {}).keys())[0]
             # Vlan ADD/Remove
             if val["state"] == "present":
-                self.frrAPI._addVlan(**tmpD)
+                self.frrAPI.addVlan(**tmpD)
             if val["state"] == "absent":
-                self.frrAPI._delVlan(**tmpD)
+                self.frrAPI.delVlan(**tmpD)
                 continue
             for ipkey in ["ipv6_address", "ipv4_address"]:
                 for ipval, ipstate in val.get(ipkey, {}).items():
                     tmpD["ip"] = normalizeIPAddress(ipval)
                     if ipstate == "present":
-                        self.frrAPI._addIP(**tmpD)
+                        self.frrAPI.addIP(**tmpD)
                     if ipstate == "absent":
-                        self.frrAPI._delIP(**tmpD)
+                        self.frrAPI.delIP(**tmpD)
 
     def applyBGPConfig(self, bgpconfig):
         """Generate BGP Commands and apply to Router (vtysh)"""
