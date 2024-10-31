@@ -52,7 +52,6 @@ def sendviaStdIn(maincmd, commands):
     if not isinstance(maincmd, list):
         maincmd = shlex.split(maincmd)
     with subprocess.Popen(maincmd, stdin=subprocess.PIPE) as mainProc:
-        print(1)
         singlecmd = ""
         for cmd in commands:
             singlecmd += f"{cmd}\n"
@@ -92,6 +91,11 @@ class VppCmd:
         self.active = False
         self.__checkVpp()
 
+    def __getInterface(self, intf):
+        """Get Interface. SENSE uses e1, e2, while vpp config expects Ethernet2/0/0"""
+        index = intf[1:]
+        return f"Ethernet{index}/0/0"
+
     def __checkVpp(self):
         """Check if VPP is active"""
         self.active = True
@@ -101,32 +105,32 @@ class VppCmd:
 
     def addVlan(self, **kwargs):
         """Add Vlan if not present"""
-        out = externalCommand(f"sudo {vppshcmd} create sub-interfaces {kwargs['interface']} {kwargs['vlanid']}")
+        out = externalCommand(f"sudo {vppshcmd} create sub-interfaces {self.__getInterface(kwargs['interface'])} {kwargs['vlanid']}")
         if out[2] != 0:
             raise Exception(f"Failed to add Vlan {kwargs['vlanid']} to {kwargs['interface']}")
         self._confVlan(**kwargs)
 
     def _confVlan(self, **kwargs):
         """Configure Vlan"""
-        out = externalCommand(f"sudo {vppshcmd} set interface state {kwargs['interface']}.{kwargs['vlanid']} up")
+        out = externalCommand(f"sudo {vppshcmd} set interface state {self.__getInterface(kwargs['interface'])}.{kwargs['vlanid']} up")
         if out[2] != 0:
             raise Exception(f"Failed to set Vlan {kwargs['vlanid']} to up")
 
     def addIP(self, **kwargs):
         """Add IP if not present"""
-        out = externalCommand(f"sudo {vppshcmd} set interface ip address {kwargs['interface']}.{kwargs['vlanid']} {kwargs['ip']}")
+        out = externalCommand(f"sudo {vppshcmd} set interface ip address {self.__getInterface(kwargs['interface'])}.{kwargs['vlanid']} {kwargs['ip']}")
         if out[2] != 0:
             raise Exception(f"Failed to add IP {kwargs['ip']} to {kwargs['interface']}.{kwargs['vlanid']}")
 
     def delVlan(self, **kwargs):
         """Delete Vlan if present"""
-        out = externalCommand(f"sudo {vppshcmd} delete sub-interface {kwargs['interface']}.{kwargs['vlanid']}")
+        out = externalCommand(f"sudo {vppshcmd} delete sub-interface {self.__getInterface(kwargs['interface'])}.{kwargs['vlanid']}")
         if out[2] != 0:
             raise Exception(f"Failed to delete Vlan {kwargs['vlanid']} to {kwargs['interface']}")
 
     def delIP(self, **kwargs):
         """Delete IP if present"""
-        out = externalCommand(f"sudo {vppshcmd} set interface ip address del {kwargs['interface']}.{kwargs['vlanid']} {kwargs['ip']}")
+        out = externalCommand(f"sudo {vppshcmd} set interface ip address del {self.__getInterface(kwargs['interface'])}.{kwargs['vlanid']} {kwargs['ip']}")
         if out[2] != 0:
             raise Exception(f"Failed to delete IP {kwargs['ip']} to {kwargs['interface']}.{kwargs['vlanid']}")
 

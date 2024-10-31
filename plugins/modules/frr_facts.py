@@ -130,7 +130,11 @@ class Interfaces(FactsBase):
     def _getSpeed(self, iface):
         """Get Speed"""
         with open(f'/sys/class/net/{iface}/speed', encoding="utf-8") as fd:
-            self.facts["interfaces"][iface]["bandwidth"] = int(fd.read().strip())
+            try:
+                print(iface, fd.read())
+                self.facts["interfaces"][iface]["bandwidth"] = int(fd.read().strip())
+            except (ValueError, OSError):
+                self.facts["interfaces"][iface]["bandwidth"] = 0
 
     def _getMacAddress(self, iface):
         """Get MAC Address"""
