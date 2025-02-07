@@ -30,7 +30,7 @@ class CustomLogger:
         """Create log file"""
         try:
             if os.path.isfile(fname):
-              return True
+                return True
             with open(fname, "a", encoding="utf-8") as log:
                 log.write(f"[{self.logService}]Log file created at {self._getTimestamp()}\n")
         except OSError:

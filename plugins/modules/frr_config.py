@@ -41,7 +41,7 @@ class CustomLogger:
         """Create log file"""
         try:
             if os.path.isfile(fname):
-              return True
+                return True
             with open(fname, "a", encoding="utf-8") as log:
                 log.write(f"[{self.logService}]Log file created at {self._getTimestamp()}\n")
         except OSError:
@@ -207,10 +207,12 @@ class VppCmd:
 
     def delVlan(self, **kwargs):
         """Delete Vlan if present"""
-        out = externalCommand(f"sudo {vppshcmd} delete sub-interface {self.__getInterface(kwargs['interface'])}.{kwargs['vlanid']}")
-        if out[2] != 0:
-            self.logger.error(f"Failed to delete Vlan {kwargs['vlanid']} to {kwargs['interface']}")
-            raise Exception(f"Failed to delete Vlan {kwargs['vlanid']} to {kwargs['interface']}")
+        # VPP Requires this to be executed twice. First delete will put it down, second will remove
+        for cmd in ["down", "delete"]:
+            out = externalCommand(f"sudo {vppshcmd} delete sub-interface {self.__getInterface(kwargs['interface'])}.{kwargs['vlanid']}")
+            if out[2] != 0:
+                self.logger.error(f"Failed to {cmd} Vlan {kwargs['vlanid']} to {kwargs['interface']}")
+                raise Exception(f"Failed to {cmd} Vlan {kwargs['vlanid']} to {kwargs['interface']}")
 
     def delIP(self, **kwargs):
         """Delete IP if present"""
