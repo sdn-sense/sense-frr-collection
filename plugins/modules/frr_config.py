@@ -721,5 +721,5 @@ if __name__ == "__main__":
     main = Main()
     mainexitCode, mainstdout = main.main()
     changed = "ok" if mainexitCode == 0 else "failed"
-    print(json.dumps({"changed": changed, "rc": mainexitCode, "stdout": mainstdout}))
+    print(json.dumps({"changed": changed, "rc": mainexitCode, "stdout": "\n".join(mainstdout)}))
     sys.exit(mainexitCode)

@@ -317,11 +317,11 @@ def main():
             ansible_facts["ansible_facts"][key] = value
     except Exception as ex:
         logger.error(f"Error running module. Ex: {ex}")
-        ansible_facts['stderr'] = [f"Error running module. Ex: {ex}"]
+        ansible_facts['stderr'] = f"Error running module. Ex: {ex}"
         exitCode = 1
     finally:
         stdout = logger.getRunContent()
-        ansible_facts['stdout'] = stdout
+        ansible_facts['stdout'] = "\n".join(stdout)
         logger.deleteRunContent()
         ansible_facts['rc'] = exitCode
         return ansible_facts, exitCode
