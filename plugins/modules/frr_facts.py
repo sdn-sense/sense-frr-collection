@@ -29,7 +29,7 @@ class CustomLogger:
     def _createLogFile(self, fname):
         """Create log file"""
         try:
-            with open(fname, "w", encoding="utf-8") as log:
+            with open(fname, "a", encoding="utf-8") as log:
                 log.write(f"[{self.logService}]Log file created at {self._getTimestamp()}\n")
         except OSError:
             return False
