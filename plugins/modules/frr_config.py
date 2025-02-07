@@ -648,6 +648,7 @@ class Main:
     def execute(self):
         """Main execute"""
         senseconfig = loadJson(self.args["config"])
+        self.logger.info(f"SENSE Config: {senseconfig}")
         self.applyVlanConfig(senseconfig.get("INTERFACE", {}))
         self.applyBGPConfig(senseconfig.get("BGP", {}))
 
