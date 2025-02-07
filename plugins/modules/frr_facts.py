@@ -9,7 +9,75 @@ import shlex
 import subprocess
 import sys
 from ipaddress import ip_address, ip_network
+import datetime
+import uuid
 
+RUNUUID = str(uuid.uuid4())
+DATE_STR = datetime.datetime.now().strftime('%Y-%m-%d')
+
+class CustomLogger:
+    """Custom Logger class"""
+    def __init__(self, logDir="/tmp", logPrefix="ansible-sense-frr-config", logService="MAIN"):
+        self.logFileMain = os.path.join(logDir, f"{logPrefix}-{DATE_STR}.stdout.log")
+        self.logFileUUID = os.path.join(logDir, f"{logPrefix}-{DATE_STR}-{RUNUUID}.stderr.log")
+        self.logService = logService
+
+    def _getTimestamp(self):
+        """Get timestamp"""
+        return datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+    def _createLogFile(self, fname):
+        """Create log file"""
+        try:
+            with open(fname, "w", encoding="utf-8") as log:
+                log.write(f"[{self.logService}]Log file created at {self._getTimestamp()}\n")
+        except OSError:
+            return False
+        return True
+
+    def __writeLogUUID(self, message, level):
+        """Write log message"""
+        if not self._createLogFile(self.logFileUUID):
+            return
+        timestamp = self._getTimestamp()
+        logEntry = f"{timestamp} - {level} - {self.logService} - {message}"
+        with open(self.logFileUUID, "a", encoding="utf-8") as log:
+            log.write(logEntry + "\n")
+
+    def _writeLog(self, message, level):
+        """Write log message"""
+        if not self._createLogFile(self.logFileMain):
+            return
+        timestamp = self._getTimestamp()
+        logEntry = f"{timestamp} - {level} - {self.logService} - {message}"
+        with open(self.logFileMain, "a", encoding="utf-8") as log:
+            log.write(logEntry + "\n")
+        self.__writeLogUUID(message, level)
+
+    def info(self, message):
+        """Log info message"""
+        self._writeLog(message, "INFO")
+
+    def warning(self, message):
+        """Log warning message"""
+        self._writeLog(message, "WARNING")
+
+    def error(self, message):
+        """Log error message"""
+        self._writeLog(message, "ERROR")
+
+    def getRunContent(self):
+        """Get log content"""
+        logcontent = []
+        if os.path.isfile(self.logFileUUID):
+            with open(self.logFileUUID, "r", encoding="utf-8") as log:
+                logcontent = log.readlines()
+        return logcontent
+
+    def deleteRunContent(self):
+        """Delete log content"""
+        if os.path.isfile(self.logFileUUID):
+            os.remove(self.logFileUUID)
 
 def normalizedip(ipInput):
     """
@@ -83,6 +151,7 @@ class FactsBase:
         self.module = module
         self.facts = {}
         self.responses = None
+        self.logger = CustomLogger()
 
     def populate(self):
         """Populate responses"""
@@ -133,7 +202,8 @@ class Interfaces(FactsBase):
             try:
                 print(iface, fd.read())
                 self.facts["interfaces"][iface]["bandwidth"] = int(fd.read().strip())
-            except (ValueError, OSError):
+            except (ValueError, OSError) as ex:
+                self.logger.error(f"Error getting speed for {iface}. Error: {ex}")
                 self.facts["interfaces"][iface]["bandwidth"] = 0
 
     def _getMacAddress(self, iface):
@@ -161,8 +231,8 @@ class Interfaces(FactsBase):
                         ifd.setdefault('ipv4', [])
                         ifd['ipv4'].append({'address': part.split('/')[0],
                                             'masklen': part.split('/')[1]})
-        except subprocess.CalledProcessError:
-            pass  # No IP information
+        except subprocess.CalledProcessError as ex:
+            self.logger.error(f"Error getting IP for {iface}. Error: {ex}")
 
     def _getroutes(self, _iface):
         """Get Routes"""
@@ -221,35 +291,43 @@ class Interfaces(FactsBase):
             self._getIP(iface)
 
 
-# Get all routes
-# add emptu lldp
-# for all mac - add into ansible_net_inf macs dic
-
-
 FACT_SUBSETS = {"interfaces": Interfaces, "config": Config}
 
 
 def main():
     """main entry point for module execution"""
-    facts = {"gather_subset": list(FACT_SUBSETS.keys())}
-    module = "FRR"
-    instances = []
-    for key in facts["gather_subset"]:
-        instances.append(FACT_SUBSETS[key](module))
+    ansible_facts = {'ansible_facts': {}}
+    exitCode = 0
+    try:
+        facts = {"gather_subset": list(FACT_SUBSETS.keys())}
+        module = "FRR"
+        instances = []
+        for key in facts["gather_subset"]:
+            instances.append(FACT_SUBSETS[key](module))
 
-    for inst in instances:
-        if inst:
-            inst.populate()
-            facts.update(inst.facts)
+        for inst in instances:
+            if inst:
+                inst.populate()
+                facts.update(inst.facts)
 
-    ansible_facts = {"ansible_facts": {}}
-    for key, value in facts.items():
-        key = f"ansible_net_{key}"
-        ansible_facts["ansible_facts"][key] = value
-
-    print(json.dumps(ansible_facts))
-    sys.exit(0)
+        ansible_facts = {"ansible_facts": {}}
+        for key, value in facts.items():
+            key = f"ansible_net_{key}"
+            ansible_facts["ansible_facts"][key] = value
+    except Exception as ex:
+        logger = CustomLogger()
+        logger.error(f"Error running module. Ex: {ex}")
+        ansible_facts['stderr'] = [f"Error running module. Ex: {ex}"]
+        exitCode = 1
+    finally:
+        stdout = logger.getRunContent()
+        ansible_facts['stdout'] = stdout
+        logger.deleteRunContent()
+        ansible_facts['rc'] = exitCode
+        return ansible_facts, exitCode
 
 
 if __name__ == "__main__":
-    main()
+    mainFacts, mainExit = main()
+    print(json.dumps(mainFacts))
+    sys.exit(mainExit)

@@ -14,12 +14,82 @@ import shlex
 import subprocess
 import sys
 from ipaddress import ip_network
+import datetime
+import uuid
 
 # TODO: Make it configurable
 vtyshcmd = "docker exec -i frr vtysh"
 vppshcmd = "docker exec -i vpp vppctl"
 defmtu = 9000
 deftxqueuelen = 10000
+
+RUNUUID = str(uuid.uuid4())
+DATE_STR = datetime.datetime.now().strftime('%Y-%m-%d')
+
+class CustomLogger:
+    """Custom Logger class"""
+    def __init__(self, logDir="/tmp", logPrefix="ansible-sense-frr-config", logService="MAIN"):
+        self.logFileMain = os.path.join(logDir, f"{logPrefix}-{DATE_STR}.stdout.log")
+        self.logFileUUID = os.path.join(logDir, f"{logPrefix}-{DATE_STR}-{RUNUUID}.stderr.log")
+        self.logService = logService
+
+    def _getTimestamp(self):
+        """Get timestamp"""
+        return datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+    def _createLogFile(self, fname):
+        """Create log file"""
+        try:
+            with open(fname, "w", encoding="utf-8") as log:
+                log.write(f"[{self.logService}]Log file created at {self._getTimestamp()}\n")
+        except OSError:
+            return False
+        return True
+
+    def __writeLogUUID(self, message, level):
+        """Write log message"""
+        if not self._createLogFile(self.logFileUUID):
+            return
+        timestamp = self._getTimestamp()
+        logEntry = f"{timestamp} - {level} - {self.logService} - {message}"
+        with open(self.logFileUUID, "a", encoding="utf-8") as log:
+            log.write(logEntry + "\n")
+
+    def _writeLog(self, message, level):
+        """Write log message"""
+        if not self._createLogFile(self.logFileMain):
+            return
+        timestamp = self._getTimestamp()
+        logEntry = f"{timestamp} - {level} - {self.logService} - {message}"
+        with open(self.logFileMain, "a", encoding="utf-8") as log:
+            log.write(logEntry + "\n")
+        self.__writeLogUUID(message, level)
+
+    def info(self, message):
+        """Log info message"""
+        self._writeLog(message, "INFO")
+
+    def warning(self, message):
+        """Log warning message"""
+        self._writeLog(message, "WARNING")
+
+    def error(self, message):
+        """Log error message"""
+        self._writeLog(message, "ERROR")
+
+    def getRunContent(self):
+        """Get log content"""
+        logcontent = []
+        if os.path.isfile(self.logFileUUID):
+            with open(self.logFileUUID, "r", encoding="utf-8") as log:
+                logcontent = log.readlines()
+        return logcontent
+
+    def deleteRunContent(self):
+        """Delete log content"""
+        if os.path.isfile(self.logFileUUID):
+            os.remove(self.logFileUUID)
+
 
 def getBroadCast(inIP):
     """Return broadcast IP."""
@@ -37,25 +107,32 @@ def normalizeIPAddress(ipInput):
 
 def externalCommand(command):
     """Execute External Commands and return stdout and stderr."""
+    logger = CustomLogger(logService="ExternalCommand")
+    logger.info(f"Executing command: {command}")
     command = shlex.split(command)
+    stdout, stderr, exitCode = "", "", -1
     with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as proc:
         stdout, stderr = proc.communicate()
         exitCode = proc.wait()
         if exitCode != 0:
             stderr = [f"Error: {command} exited non-zero. Exit: {exitCode}"] + stderr.decode("utf-8").split("\n")
-        return [stdout, stderr, exitCode]
-    return ["", "", -1]
+    logger.info(f"Command: {command} executed. Exit: {exitCode} Stdout: {stdout} Stderr: {stderr}")
+    return [stdout, stderr, exitCode]
 
 
 def sendviaStdIn(maincmd, commands):
     """Send commands to maincmd stdin"""
+    logger = CustomLogger(logService="sendviaStdIn")
     if not isinstance(maincmd, list):
         maincmd = shlex.split(maincmd)
-    with subprocess.Popen(maincmd, stdin=subprocess.PIPE) as mainProc:
+    with subprocess.Popen(maincmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as mainProc:
         singlecmd = ""
         for cmd in commands:
             singlecmd += f"{cmd}\n"
-        mainProc.communicate(input=singlecmd.encode())
+        logger.info(f"Sending commands: {singlecmd}")
+        stdout, stderr = mainProc.communicate(input=singlecmd.encode())
+        exitCode = mainProc.wait()
+        logger.info(f"Commands: {singlecmd} executed. Exit: {exitCode} Stdout: {stdout} Stderr: {stderr}")
 
 
 def strtojson(intxt):
@@ -90,6 +167,7 @@ class VppCmd:
     def __init__(self):
         self.active = False
         self.__checkVpp()
+        self.logger = CustomLogger(logService="VPP")
 
     def __getInterface(self, intf):
         """Get Interface. SENSE uses e1, e2, while vpp config expects Ethernet2/0/0"""
@@ -107,6 +185,7 @@ class VppCmd:
         """Add Vlan if not present"""
         out = externalCommand(f"sudo {vppshcmd} create sub-interfaces {self.__getInterface(kwargs['interface'])} {kwargs['vlanid']}")
         if out[2] != 0:
+            self.logger.error(f"Failed to add Vlan {kwargs['vlanid']} to {kwargs['interface']}")
             raise Exception(f"Failed to add Vlan {kwargs['vlanid']} to {kwargs['interface']}")
         self._confVlan(**kwargs)
 
@@ -114,24 +193,28 @@ class VppCmd:
         """Configure Vlan"""
         out = externalCommand(f"sudo {vppshcmd} set interface state {self.__getInterface(kwargs['interface'])}.{kwargs['vlanid']} up")
         if out[2] != 0:
+            self.logger.error(f"Failed to set Vlan {kwargs['vlanid']} to up")
             raise Exception(f"Failed to set Vlan {kwargs['vlanid']} to up")
 
     def addIP(self, **kwargs):
         """Add IP if not present"""
         out = externalCommand(f"sudo {vppshcmd} set interface ip address {self.__getInterface(kwargs['interface'])}.{kwargs['vlanid']} {kwargs['ip']}")
         if out[2] != 0:
+            self.logger.error(f"Failed to add IP {kwargs['ip']} to {kwargs['interface']}.{kwargs['vlanid']}")
             raise Exception(f"Failed to add IP {kwargs['ip']} to {kwargs['interface']}.{kwargs['vlanid']}")
 
     def delVlan(self, **kwargs):
         """Delete Vlan if present"""
         out = externalCommand(f"sudo {vppshcmd} delete sub-interface {self.__getInterface(kwargs['interface'])}.{kwargs['vlanid']}")
         if out[2] != 0:
+            self.logger.error(f"Failed to delete Vlan {kwargs['vlanid']} to {kwargs['interface']}")
             raise Exception(f"Failed to delete Vlan {kwargs['vlanid']} to {kwargs['interface']}")
 
     def delIP(self, **kwargs):
         """Delete IP if present"""
         out = externalCommand(f"sudo {vppshcmd} set interface ip address del {self.__getInterface(kwargs['interface'])}.{kwargs['vlanid']} {kwargs['ip']}")
         if out[2] != 0:
+            self.logger.error(f"Failed to delete IP {kwargs['ip']} to {kwargs['interface']}.{kwargs['vlanid']}")
             raise Exception(f"Failed to delete IP {kwargs['ip']} to {kwargs['interface']}.{kwargs['vlanid']}")
 
 
@@ -141,9 +224,8 @@ class IPCmd:
         self.active = False
         self.config = {}
         self.needRefresh = True
-        self.module_stdout = []
-        self.module_stderr = []
         self.checkIP()
+        self.logger = CustomLogger(logService="IPCmd")
 
     def checkIP(self):
         """Check if IP is active"""
@@ -177,8 +259,10 @@ class IPCmd:
                 self.needRefresh = True
                 return
             except Exception as ex:
+                self.logger.warning(f"Failed to execute command {cmd}. Retries left: {retries}. Exception: {ex}")
                 retries -= 1
                 if not retries:
+                    self.logger.error(f"Failed to execute command {cmd}. Exception: {ex}")
                     raise ex
                 time.sleep(1)
 
@@ -230,25 +314,26 @@ class IPCmd:
             cmd = f"sudo ip addr del {kwargs['ip']} broadcast {getBroadCast(kwargs['ip'])} dev {kwargs['interface']}.{kwargs['vlanid']}"
             try:
                 self.__executeCommand(cmd)
-            except Exception:
+            except Exception as ex:
+                self.logger.warning(f"Failed to delete IP {kwargs['ip']} from {kwargs['interface']}.{kwargs['vlanid']}. Exception: {ex}")
                 # This can fail if whole interface is deleted and not IP is changed.
                 # In case of IP change - this will not except.
-                pass
         else:
             for delip in self.config.get(kwargs["vlan"], {}).get("ips", []):
                 kwargs["ip"] = delip
                 self.delIP(**kwargs)
 
 
-
-
 class FrrCmd:
     """Frr CMD Executor API"""
 
     def __init__(self):
+        self.logger = CustomLogger(logService="FrrCmd")
         self.controller = VppCmd()
         if not self.controller.active:
+            self.logger.error("VPP is not active. Will use IPCmd")
             self.controller = IPCmd()
+
     def addVlan(self, **kwargs):
         """Add Vlan if not present"""
         self.controller.addVlan(**kwargs)
@@ -272,8 +357,6 @@ class vtyshParser:
     def __init__(self):
         self.running_config = {}
         self.stdout = ""
-        self.module_stdout = []
-        self.module_stderr = []
         self.totalLines = 0
         self.regexes = {
             "network": r"network ([0-9a-f.:]*)/([0-9]{1,3})",
@@ -410,6 +493,7 @@ class vtyshConfigure:
 
     def __init__(self):
         self.commands = []
+        self.logger = CustomLogger(logService="vtyshConfigure")
 
     def _genPrefixList(self, parser, newConf):
         """Generate Prefix lists"""
@@ -559,8 +643,7 @@ class Main:
         self.frrAPI = FrrCmd()
         self.vtyshparser = vtyshParser()
         self.vtyConf = vtyshConfigure()
-        self.module_stdout = []
-        self.module_stderr = []
+        self.logger = CustomLogger(logService="Main")
 
     def execute(self):
         """Main execute"""
@@ -571,6 +654,7 @@ class Main:
     def parseArgs(self, inFile):
         """Parse Args from input file"""
         if not os.path.isfile(inFile):
+            self.logger.error("Input File from param does not exist on Device.")
             raise Exception("Input File from param does not exist on Device.")
         params = {"debug": r"frr_debug=(\S+)", "config": r"frr_config=(\S+)"}
         args = {}
@@ -612,16 +696,29 @@ class Main:
 
     def main(self):
         """Main run"""
-        if len(sys.argv) != 2:
-            raise Exception(f"Issue with passed arguments. Input: {sys.argv}")
-        self.args = self.parseArgs(sys.argv[1])
-        if not self.args.get("config", None):
-            raise Exception(f"Issue with parsing input config. Input: {sys.argv}")
-        self.execute()
-        print(json.dumps({"changed": "ok"}))
+        exitCode = 0
+        try:
+            if len(sys.argv) != 2:
+                self.logger.error(f"Issue with passed arguments. Input: {sys.argv}")
+                raise Exception(f"Issue with passed arguments. Input: {sys.argv}")
+            self.args = self.parseArgs(sys.argv[1])
+            if not self.args.get("config", None):
+                self.logger.error(f"Issue with parsing input config. Input: {sys.argv}")
+                raise Exception(f"Issue with parsing input config. Input: {sys.argv}")
+            self.execute()
+        except Exception as ex:
+            self.logger.error(f"Exception: {ex}")
+            exitCode = 1
+        finally:
+            self.logger.info(f"Run finished. Exit: {exitCode}")
+            stdout = self.logger.getRunContent()
+            self.logger.deleteRunContent()
+            return exitCode, stdout
 
 
 if __name__ == "__main__":
     main = Main()
-    main.main()
-    sys.exit(0)
+    mainexitCode, mainstdout = main.main()
+    changed = "ok" if mainexitCode == 0 else "failed"
+    print(json.dumps({"changed": changed, "rc": mainexitCode, "stdout": mainstdout}))
+    sys.exit(mainexitCode)
