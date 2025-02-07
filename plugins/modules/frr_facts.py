@@ -17,9 +17,9 @@ DATE_STR = datetime.datetime.now().strftime('%Y-%m-%d')
 
 class CustomLogger:
     """Custom Logger class"""
-    def __init__(self, logDir="/tmp", logPrefix="ansible-sense-frr-config", logService="MAIN"):
+    def __init__(self, logDir="/tmp", logPrefix="ansible-sense-frr-facts", logService="MAIN"):
         self.logFileMain = os.path.join(logDir, f"{logPrefix}-{DATE_STR}.stdout.log")
-        self.logFileUUID = os.path.join(logDir, f"{logPrefix}-{DATE_STR}-{RUNUUID}.stderr.log")
+        self.logFileUUID = os.path.join(logDir, f"{logPrefix}-{DATE_STR}-{RUNUUID}.stdout.log")
         self.logService = logService
 
     def _getTimestamp(self):
