@@ -298,6 +298,7 @@ def main():
     """main entry point for module execution"""
     ansible_facts = {'ansible_facts': {}}
     exitCode = 0
+    logger = CustomLogger()
     try:
         facts = {"gather_subset": list(FACT_SUBSETS.keys())}
         module = "FRR"
@@ -315,7 +316,6 @@ def main():
             key = f"ansible_net_{key}"
             ansible_facts["ansible_facts"][key] = value
     except Exception as ex:
-        logger = CustomLogger()
         logger.error(f"Error running module. Ex: {ex}")
         ansible_facts['stderr'] = [f"Error running module. Ex: {ex}"]
         exitCode = 1
