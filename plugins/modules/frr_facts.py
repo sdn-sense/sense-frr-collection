@@ -1,30 +1,36 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """Gather Frr Facts"""
+import datetime
+import json
 # Copyright: Contributors to the Ansible project
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
 import os
-import json
 import shlex
 import subprocess
 import sys
-from ipaddress import ip_address, ip_network
-import datetime
 import uuid
+from ipaddress import ip_address, ip_network
 
 RUNUUID = str(uuid.uuid4())
-DATE_STR = datetime.datetime.now().strftime('%Y-%m-%d')
+DATE_STR = datetime.datetime.now().strftime("%Y-%m-%d")
+
 
 class CustomLogger:
     """Custom Logger class"""
-    def __init__(self, logDir="/tmp", logPrefix="ansible-sense-frr-facts", logService="MAIN"):
+
+    def __init__(
+        self, logDir="/tmp", logPrefix="ansible-sense-frr-facts", logService="MAIN"
+    ):
         self.logFileMain = os.path.join(logDir, f"{logPrefix}-{DATE_STR}.stdout.log")
-        self.logFileUUID = os.path.join(logDir, f"{logPrefix}-{DATE_STR}-{RUNUUID}.stdout.log")
+        self.logFileUUID = os.path.join(
+            logDir, f"{logPrefix}-{DATE_STR}-{RUNUUID}.stdout.log"
+        )
         self.logService = logService
 
     def _getTimestamp(self):
         """Get timestamp"""
-        return datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     def _createLogFile(self, fname):
         """Create log file"""
@@ -32,7 +38,9 @@ class CustomLogger:
             if os.path.isfile(fname):
                 return True
             with open(fname, "a", encoding="utf-8") as log:
-                log.write(f"[{self.logService}]Log file created at {self._getTimestamp()}\n")
+                log.write(
+                    f"[{self.logService}]Log file created at {self._getTimestamp()}\n"
+                )
         except OSError:
             return False
         return True
@@ -80,6 +88,7 @@ class CustomLogger:
         """Delete log content"""
         if os.path.isfile(self.logFileUUID):
             os.remove(self.logFileUUID)
+
 
 def normalizedip(ipInput):
     """
@@ -164,7 +173,6 @@ class FactsBase:
         return run_commands(self.module, cmd, check_rc=False)
 
 
-
 class Config(FactsBase):
     """Default Class to get basic info"""
 
@@ -183,18 +191,19 @@ class Config(FactsBase):
     def parse_mac_table(self, rawOut):
         "Parse MAC table from ip neigh output"
         out = {}
-        vlan = '0'
+        vlan = "0"
         for line in rawOut.splitlines():
             parts = line.split()
             if len(parts) < 5:
                 continue
-            if '.' in parts[2]:
-                vlan = parts[2].split('.', 1)[1]
-            if parts[-1] == 'REACHABLE':
+            if "." in parts[2]:
+                vlan = parts[2].split(".", 1)[1]
+            if parts[-1] == "REACHABLE":
                 out.setdefault(str(vlan), [])
                 if parts[4] not in out[vlan]:
                     out[vlan].append(parts[4])
         return out
+
 
 class Interfaces(FactsBase):
     """All Interfaces Class"""
@@ -203,22 +212,22 @@ class Interfaces(FactsBase):
 
     def _getOperStatus(self, iface):
         """Get oper status"""
-        with open(f'/sys/class/net/{iface}/operstate', encoding="utf-8") as fd:
+        with open(f"/sys/class/net/{iface}/operstate", encoding="utf-8") as fd:
             self.facts["interfaces"][iface]["operstatus"] = fd.read().strip()
 
     def _getMTU(self, iface):
         """Get MTU"""
-        with open(f'/sys/class/net/{iface}/mtu', encoding="utf-8") as fd:
+        with open(f"/sys/class/net/{iface}/mtu", encoding="utf-8") as fd:
             self.facts["interfaces"][iface]["mtu"] = int(fd.read().strip())
 
     def _getTxQueueLen(self, iface):
         """Get Tx Queue Length"""
-        with open(f'/sys/class/net/{iface}/tx_queue_len', encoding="utf-8") as fd:
+        with open(f"/sys/class/net/{iface}/tx_queue_len", encoding="utf-8") as fd:
             self.facts["interfaces"][iface]["txqueuelen"] = int(fd.read().strip())
 
     def _getSpeed(self, iface):
         """Get Speed"""
-        with open(f'/sys/class/net/{iface}/speed', encoding="utf-8") as fd:
+        with open(f"/sys/class/net/{iface}/speed", encoding="utf-8") as fd:
             try:
                 print(iface, fd.read())
                 self.facts["interfaces"][iface]["bandwidth"] = int(fd.read().strip())
@@ -229,7 +238,7 @@ class Interfaces(FactsBase):
     def _getMacAddress(self, iface):
         """Get MAC Address"""
         infod = self.facts.setdefault("info", {"macs": []})
-        with open(f'/sys/class/net/{iface}/address', encoding="utf-8") as fd:
+        with open(f"/sys/class/net/{iface}/address", encoding="utf-8") as fd:
             macaddr = fd.read().strip()
             self.facts["interfaces"][iface]["macaddress"] = macaddr
             if macaddr not in infod["macs"]:
@@ -239,18 +248,30 @@ class Interfaces(FactsBase):
         """Get IP"""
         ifd = self.facts["interfaces"].setdefault(iface, {})
         try:
-            ip_output = subprocess.check_output(f'ip -br addr show {iface}', shell=True).decode().splitlines()[0]
+            ip_output = (
+                subprocess.check_output(f"ip -br addr show {iface}", shell=True)
+                .decode()
+                .splitlines()[0]
+            )
             ip_parts = ip_output.split()
             for part in ip_parts:
-                if '/' in part:  # Check for IP address with subnet
-                    if ':' in part:
-                        ifd.setdefault('ipv6', [])
-                        ifd['ipv6'].append({'address': part.split('/')[0],
-                                            'masklen': part.split('/')[1]})
+                if "/" in part:  # Check for IP address with subnet
+                    if ":" in part:
+                        ifd.setdefault("ipv6", [])
+                        ifd["ipv6"].append(
+                            {
+                                "address": part.split("/")[0],
+                                "masklen": part.split("/")[1],
+                            }
+                        )
                     else:
-                        ifd.setdefault('ipv4', [])
-                        ifd['ipv4'].append({'address': part.split('/')[0],
-                                            'masklen': part.split('/')[1]})
+                        ifd.setdefault("ipv4", [])
+                        ifd["ipv4"].append(
+                            {
+                                "address": part.split("/")[0],
+                                "masklen": part.split("/")[1],
+                            }
+                        )
         except subprocess.CalledProcessError as ex:
             self.logger.error(f"Error getting IP for {iface}. Error: {ex}")
 
@@ -259,8 +280,10 @@ class Interfaces(FactsBase):
         self.facts.setdefault("ipv4", [])
         self.facts.setdefault("ipv6", [])
         # IPv4 Routes
-        for item in [['4', 'default', '0.0.0.0/0'], ['6', 'default', '::/0']]:
-            ipResult = subprocess.run(['ip', f'-{item[0]}', 'route'], capture_output=True, text=True)
+        for item in [["4", "default", "0.0.0.0/0"], ["6", "default", "::/0"]]:
+            ipResult = subprocess.run(
+                ["ip", f"-{item[0]}", "route"], capture_output=True, text=True
+            )
             ipLines = ipResult.stdout.splitlines()
             for line in ipLines:
                 parts = line.split()
@@ -269,12 +292,12 @@ class Interfaces(FactsBase):
                     to_route = parts[2]
                 else:
                     from_route = parts[0]
-                    to_route = parts[2] if 'via' in parts else parts[1]
-                if to_route == 'dev' and 'src' in parts:
-                    to_route = parts[parts.index('src') + 1]
-                elif to_route == 'dev':
-                    to_route = parts[parts.index('dev') + 1]
-                nroute = {'from': from_route, 'to': to_route}
+                    to_route = parts[2] if "via" in parts else parts[1]
+                if to_route == "dev" and "src" in parts:
+                    to_route = parts[parts.index("src") + 1]
+                elif to_route == "dev":
+                    to_route = parts[parts.index("dev") + 1]
+                nroute = {"from": from_route, "to": to_route}
                 if nroute not in self.facts[f"ipv{item[0]}"]:
                     self.facts[f"ipv{item[0]}"].append(nroute)
 
@@ -284,22 +307,22 @@ class Interfaces(FactsBase):
 
     def _addSwitchPort(self, iface):
         """Add Switch Port"""
-        if len(iface.split('.')) == 2:
-            self.facts["interfaces"][iface]["switchport"] = 'no'
+        if len(iface.split(".")) == 2:
+            self.facts["interfaces"][iface]["switchport"] = "no"
             self.facts["interfaces"][iface].setdefault("tagged", [])
-            self.facts["interfaces"][iface]['tagged'].append(iface.split('.')[1])
+            self.facts["interfaces"][iface]["tagged"].append(iface.split(".")[1])
             return
-        self.facts["interfaces"][iface]["switchport"] = 'yes'
+        self.facts["interfaces"][iface]["switchport"] = "yes"
         self.facts["interfaces"][iface].setdefault("untagged", [])
-        self.facts["interfaces"][iface]['untagged'].append(iface)
+        self.facts["interfaces"][iface]["untagged"].append(iface)
 
     def populate(self):
         super(Interfaces, self).populate()
         self.facts["interfaces"] = {}
         self._getlldp("all")
         self._getroutes("all")
-        for iface in os.listdir('/sys/class/net'):
-            if iface == 'lo':
+        for iface in os.listdir("/sys/class/net"):
+            if iface == "lo":
                 continue
             self.facts["interfaces"].setdefault(iface, {})
             self._addSwitchPort(iface)
@@ -316,7 +339,7 @@ FACT_SUBSETS = {"interfaces": Interfaces, "config": Config}
 
 def main():
     """main entry point for module execution"""
-    ansible_facts = {'ansible_facts': {}}
+    ansible_facts = {"ansible_facts": {}}
     exitCode = 0
     logger = CustomLogger()
     try:
@@ -337,13 +360,13 @@ def main():
             ansible_facts["ansible_facts"][key] = value
     except Exception as ex:
         logger.error(f"Error running module. Ex: {ex}")
-        ansible_facts['stderr'] = f"Error running module. Ex: {ex}"
+        ansible_facts["stderr"] = f"Error running module. Ex: {ex}"
         exitCode = 1
     finally:
         stdout = logger.getRunContent()
-        ansible_facts['stdout'] = "\n".join(stdout)
+        ansible_facts["stdout"] = "\n".join(stdout)
         logger.deleteRunContent()
-        ansible_facts['rc'] = exitCode
+        ansible_facts["rc"] = exitCode
         return ansible_facts, exitCode
 
 
