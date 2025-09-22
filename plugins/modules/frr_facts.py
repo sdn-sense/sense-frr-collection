@@ -164,19 +164,37 @@ class FactsBase:
         return run_commands(self.module, cmd, check_rc=False)
 
 
+
 class Config(FactsBase):
     """Default Class to get basic info"""
 
     COMMANDS = [
         "ip addr",
         "ip r",
-        "ip -6 r"
+        "ip -6 r",
+        "ip neigh",
     ]
 
     def populate(self):
         super(Config, self).populate()
         self.facts["config"] = self.responses
+        self.facts["mactable"] = self.parse_mac_table(self.responses[3])
 
+    def parse_mac_table(self, rawOut):
+        "Parse MAC table from ip neigh output"
+        out = {}
+        vlan = '0'
+        for line in rawOut.splitlines():
+            parts = line.split()
+            if len(parts) < 5:
+                continue
+            if '.' in parts[2]:
+                vlan = parts[2].split('.', 1)[1]
+            if parts[-1] == 'REACHABLE':
+                out.setdefault(str(vlan), [])
+                if parts[4] not in out[vlan]:
+                    out[vlan].append(parts[4])
+        return out
 
 class Interfaces(FactsBase):
     """All Interfaces Class"""
