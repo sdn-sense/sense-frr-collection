@@ -566,9 +566,7 @@ class vtyshConfigure:
         if not senseasn:
             return
         runnasn = parser.running_config.get("bgp", {}).get("asn", None)
-        if not runnasn:
-            return
-        if int(senseasn) != int(runnasn):
+        if runnasn and int(senseasn) != int(runnasn):
             msg = f"Running ASN != SENSE ASN ({runnasn} != {senseasn})"
             raise Exception(msg)
         # Append only if any new commands are added.
