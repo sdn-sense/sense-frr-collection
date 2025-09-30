@@ -17,12 +17,6 @@ from ipaddress import ip_network
 import datetime
 import uuid
 
-# TODO: Make it configurable
-vtyshcmd = "docker exec -i frr vtysh"
-vppshcmd = "docker exec -i vpp vppctl"
-defmtu = 9000
-deftxqueuelen = 10000
-
 RUNUUID = str(uuid.uuid4())
 DATE_STR = datetime.datetime.now().strftime('%Y-%m-%d')
 
@@ -719,6 +713,33 @@ class Main:
             stdout = self.logger.getRunContent()
             self.logger.deleteRunContent()
             return exitCode, stdout
+
+def getVtyshCmd():
+    """Detect whether to use local vtysh or docker exec."""
+    _, _, exitCode = externalCommand("vtysh -c 'show version'")
+    if exitCode == 0:
+        return "vtysh"
+    _, _, exitCode = externalCommand("docker exec -i frr vtysh -c 'show version'")
+    if exitCode == 0:
+        return "docker exec -i frr vtysh"
+    raise RuntimeError("Neither vtysh nor docker exec -i frr vtysh is available!")
+
+def getVppctlCmd():
+    """Detect whether to use local vppctl or docker exec."""
+    _, _, exitCode = externalCommand("vppctl show version")
+    if exitCode == 0:
+        return "vppctl"
+    _, _, exitCode = externalCommand("docker exec -i vpp vppctl show version")
+    if exitCode == 0:
+        return "docker exec -i vpp vppctl"
+
+    raise RuntimeError("Neither vppctl nor docker exec -i vpp vppctl is available!")
+
+
+vtyshcmd = getVtyshCmd()
+vppshcmd = getVppctlCmd()
+defmtu = 9000
+deftxqueuelen = 10000
 
 
 if __name__ == "__main__":
