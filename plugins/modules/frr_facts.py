@@ -212,37 +212,49 @@ class Interfaces(FactsBase):
 
     def _getOperStatus(self, iface):
         """Get oper status"""
-        with open(f"/sys/class/net/{iface}/operstate", encoding="utf-8") as fd:
-            self.facts["interfaces"][iface]["operstatus"] = fd.read().strip()
+        if os.path.isfile(f"/sys/class/net/{iface}/operstate"):
+            with open(f"/sys/class/net/{iface}/operstate", encoding="utf-8") as fd:
+                self.facts["interfaces"][iface]["operstatus"] = fd.read().strip()
+        else:
+            self.facts["interfaces"][iface]["operstatus"] = "unknown"
 
     def _getMTU(self, iface):
         """Get MTU"""
-        with open(f"/sys/class/net/{iface}/mtu", encoding="utf-8") as fd:
-            self.facts["interfaces"][iface]["mtu"] = int(fd.read().strip())
+        if os.path.isfile(f"/sys/class/net/{iface}/mtu"):
+            with open(f"/sys/class/net/{iface}/mtu", encoding="utf-8") as fd:
+                self.facts["interfaces"][iface]["mtu"] = int(fd.read().strip())
+        else:
+            self.facts["interfaces"][iface]["mtu"] = 1500
 
     def _getTxQueueLen(self, iface):
         """Get Tx Queue Length"""
-        with open(f"/sys/class/net/{iface}/tx_queue_len", encoding="utf-8") as fd:
-            self.facts["interfaces"][iface]["txqueuelen"] = int(fd.read().strip())
+        if os.path.isfile(f"/sys/class/net/{iface}/tx_queue_len"):
+            with open(f"/sys/class/net/{iface}/tx_queue_len", encoding="utf-8") as fd:
+                self.facts["interfaces"][iface]["txqueuelen"] = int(fd.read().strip())
+        else:
+            self.facts["interfaces"][iface]["txqueuelen"] = 1000
 
     def _getSpeed(self, iface):
         """Get Speed"""
-        with open(f"/sys/class/net/{iface}/speed", encoding="utf-8") as fd:
-            try:
-                print(iface, fd.read())
-                self.facts["interfaces"][iface]["bandwidth"] = int(fd.read().strip())
-            except (ValueError, OSError) as ex:
-                self.logger.error(f"Error getting speed for {iface}. Error: {ex}")
-                self.facts["interfaces"][iface]["bandwidth"] = 0
+        if os.path.isfile(f"/sys/class/net/{iface}/speed"):
+            with open(f"/sys/class/net/{iface}/speed", encoding="utf-8") as fd:
+                try:
+                    self.facts["interfaces"][iface]["bandwidth"] = int(fd.read().strip())
+                except (ValueError, OSError) as ex:
+                    self.logger.error(f"Error getting speed for {iface}. Error: {ex}")
+                    self.facts["interfaces"][iface]["bandwidth"] = 0
+        else:
+            self.facts["interfaces"][iface]["bandwidth"] = 0
 
     def _getMacAddress(self, iface):
         """Get MAC Address"""
         infod = self.facts.setdefault("info", {"macs": []})
-        with open(f"/sys/class/net/{iface}/address", encoding="utf-8") as fd:
-            macaddr = fd.read().strip()
-            self.facts["interfaces"][iface]["macaddress"] = macaddr
-            if macaddr not in infod["macs"]:
-                infod["macs"].append(macaddr)
+        if os.path.isfile(f"/sys/class/net/{iface}/address"):
+            with open(f"/sys/class/net/{iface}/address", encoding="utf-8") as fd:
+                macaddr = fd.read().strip()
+                self.facts["interfaces"][iface]["macaddress"] = macaddr
+                if macaddr not in infod["macs"]:
+                    infod["macs"].append(macaddr)
 
     def _getIP(self, iface):
         """Get IP"""
