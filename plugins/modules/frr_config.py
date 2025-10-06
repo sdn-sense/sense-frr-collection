@@ -4,8 +4,8 @@
 SENSE Frr Module, which is copied and called via Ansible from
 SENSE Site-RM Resource Manager.
 """
-import time
 import ast
+import datetime
 import ipaddress
 import json
 import os
@@ -13,23 +13,29 @@ import re
 import shlex
 import subprocess
 import sys
-from ipaddress import ip_network
-import datetime
+import time
 import uuid
+from ipaddress import ip_network
 
 RUNUUID = str(uuid.uuid4())
-DATE_STR = datetime.datetime.now().strftime('%Y-%m-%d')
+DATE_STR = datetime.datetime.now().strftime("%Y-%m-%d")
+
 
 class CustomLogger:
     """Custom Logger class"""
-    def __init__(self, logDir="/tmp", logPrefix="ansible-sense-frr-config", logService="MAIN"):
+
+    def __init__(
+        self, logDir="/tmp", logPrefix="ansible-sense-frr-config", logService="MAIN"
+    ):
         self.logFileMain = os.path.join(logDir, f"{logPrefix}-{DATE_STR}.stdout.log")
-        self.logFileUUID = os.path.join(logDir, f"{logPrefix}-{DATE_STR}-{RUNUUID}.stdout.log")
+        self.logFileUUID = os.path.join(
+            logDir, f"{logPrefix}-{DATE_STR}-{RUNUUID}.stdout.log"
+        )
         self.logService = logService
 
     def _getTimestamp(self):
         """Get timestamp"""
-        return datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     def _createLogFile(self, fname):
         """Create log file"""
@@ -37,7 +43,9 @@ class CustomLogger:
             if os.path.isfile(fname):
                 return True
             with open(fname, "a", encoding="utf-8") as log:
-                log.write(f"[{self.logService}]Log file created at {self._getTimestamp()}\n")
+                log.write(
+                    f"[{self.logService}]Log file created at {self._getTimestamp()}\n"
+                )
         except OSError:
             return False
         return True
@@ -92,6 +100,7 @@ def getBroadCast(inIP):
     myNet = ip_network(str(inIP), strict=False)
     return str(myNet.broadcast_address)
 
+
 def normalizeIPAddress(ipInput):
     """Normalize IP Address"""
     tmpIP = ipInput.split("/")
@@ -107,12 +116,27 @@ def externalCommand(command):
     logger.info(f"Executing command: {command}")
     command = shlex.split(command)
     stdout, stderr, exitCode = "", "", -1
-    with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as proc:
-        stdout, stderr = proc.communicate()
-        exitCode = proc.wait()
-        if exitCode != 0:
-            stderr = [f"Error: {command} exited non-zero. Exit: {exitCode}"] + stderr.decode("utf-8").split("\n")
-    logger.info(f"Command: {command} executed. Exit: {exitCode} Stdout: {stdout} Stderr: {stderr}")
+    try:
+        with subprocess.Popen(
+            command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        ) as proc:
+            stdout, stderr = proc.communicate()
+            exitCode = proc.wait()
+            if exitCode != 0:
+                stderr = [
+                    f"Error: {command} exited non-zero. Exit: {exitCode}"
+                ] + stderr.decode("utf-8").split("\n")
+    except FileNotFoundError as ex:
+        stderr = [f"Error: {command} not found. Exception: {ex}"]
+        exitCode = 127
+        stdout = ""
+    except Exception as ex:
+        stderr = [f"Error: {command} failed to execute. Exception: {ex}"]
+        exitCode = 1
+        stdout = ""
+    logger.info(
+        f"Command: {command} executed. Exit: {exitCode} Stdout: {stdout} Stderr: {stderr}"
+    )
     return [stdout, stderr, exitCode]
 
 
@@ -121,14 +145,18 @@ def sendviaStdIn(maincmd, commands):
     logger = CustomLogger(logService="sendviaStdIn")
     if not isinstance(maincmd, list):
         maincmd = shlex.split(maincmd)
-    with subprocess.Popen(maincmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as mainProc:
+    with subprocess.Popen(
+        maincmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+    ) as mainProc:
         singlecmd = ""
         for cmd in commands:
             singlecmd += f"{cmd}\n"
         logger.info(f"Sending commands: {singlecmd}")
         stdout, stderr = mainProc.communicate(input=singlecmd.encode())
         exitCode = mainProc.wait()
-        logger.info(f"Commands: {singlecmd} executed. Exit: {exitCode} Stdout: {stdout} Stderr: {stderr}")
+        logger.info(
+            f"Commands: {singlecmd} executed. Exit: {exitCode} Stdout: {stdout} Stderr: {stderr}"
+        )
 
 
 def strtojson(intxt):
@@ -158,8 +186,10 @@ def loadJson(infile):
                 out[splline[0]] = strtojson(splline[1])
     return out
 
+
 class VppCmd:
     """VPP CMD Executor API"""
+
     def __init__(self):
         self.active = False
         self.__checkVpp()
@@ -179,45 +209,72 @@ class VppCmd:
 
     def addVlan(self, **kwargs):
         """Add Vlan if not present"""
-        out = externalCommand(f"sudo {vppshcmd} create sub-interfaces {self.__getInterface(kwargs['interface'])} {kwargs['vlanid']}")
+        out = externalCommand(
+            f"sudo {vppshcmd} create sub-interfaces {self.__getInterface(kwargs['interface'])} {kwargs['vlanid']}"
+        )
         if out[2] != 0:
-            self.logger.error(f"Failed to add Vlan {kwargs['vlanid']} to {kwargs['interface']}")
-            raise Exception(f"Failed to add Vlan {kwargs['vlanid']} to {kwargs['interface']}")
+            self.logger.error(
+                f"Failed to add Vlan {kwargs['vlanid']} to {kwargs['interface']}"
+            )
+            raise Exception(
+                f"Failed to add Vlan {kwargs['vlanid']} to {kwargs['interface']}"
+            )
         self._confVlan(**kwargs)
 
     def _confVlan(self, **kwargs):
         """Configure Vlan"""
-        out = externalCommand(f"sudo {vppshcmd} set interface state {self.__getInterface(kwargs['interface'])}.{kwargs['vlanid']} up")
+        out = externalCommand(
+            f"sudo {vppshcmd} set interface state {self.__getInterface(kwargs['interface'])}.{kwargs['vlanid']} up"
+        )
         if out[2] != 0:
             self.logger.error(f"Failed to set Vlan {kwargs['vlanid']} to up")
             raise Exception(f"Failed to set Vlan {kwargs['vlanid']} to up")
 
     def addIP(self, **kwargs):
         """Add IP if not present"""
-        out = externalCommand(f"sudo {vppshcmd} set interface ip address {self.__getInterface(kwargs['interface'])}.{kwargs['vlanid']} {kwargs['ip']}")
+        out = externalCommand(
+            f"sudo {vppshcmd} set interface ip address {self.__getInterface(kwargs['interface'])}.{kwargs['vlanid']} {kwargs['ip']}"
+        )
         if out[2] != 0:
-            self.logger.error(f"Failed to add IP {kwargs['ip']} to {kwargs['interface']}.{kwargs['vlanid']}")
-            raise Exception(f"Failed to add IP {kwargs['ip']} to {kwargs['interface']}.{kwargs['vlanid']}")
+            self.logger.error(
+                f"Failed to add IP {kwargs['ip']} to {kwargs['interface']}.{kwargs['vlanid']}"
+            )
+            raise Exception(
+                f"Failed to add IP {kwargs['ip']} to {kwargs['interface']}.{kwargs['vlanid']}"
+            )
 
     def delVlan(self, **kwargs):
         """Delete Vlan if present"""
         # VPP Requires this to be executed twice. First delete will put it down, second will remove
         for cmd in ["down", "delete"]:
-            out = externalCommand(f"sudo {vppshcmd} delete sub-interface {self.__getInterface(kwargs['interface'])}.{kwargs['vlanid']}")
+            out = externalCommand(
+                f"sudo {vppshcmd} delete sub-interface {self.__getInterface(kwargs['interface'])}.{kwargs['vlanid']}"
+            )
             if out[2] != 0:
-                self.logger.error(f"Failed to {cmd} Vlan {kwargs['vlanid']} to {kwargs['interface']}")
-                raise Exception(f"Failed to {cmd} Vlan {kwargs['vlanid']} to {kwargs['interface']}")
+                self.logger.error(
+                    f"Failed to {cmd} Vlan {kwargs['vlanid']} to {kwargs['interface']}"
+                )
+                raise Exception(
+                    f"Failed to {cmd} Vlan {kwargs['vlanid']} to {kwargs['interface']}"
+                )
 
     def delIP(self, **kwargs):
         """Delete IP if present"""
-        out = externalCommand(f"sudo {vppshcmd} set interface ip address del {self.__getInterface(kwargs['interface'])}.{kwargs['vlanid']} {kwargs['ip']}")
+        out = externalCommand(
+            f"sudo {vppshcmd} set interface ip address del {self.__getInterface(kwargs['interface'])}.{kwargs['vlanid']} {kwargs['ip']}"
+        )
         if out[2] != 0:
-            self.logger.error(f"Failed to delete IP {kwargs['ip']} to {kwargs['interface']}.{kwargs['vlanid']}")
-            raise Exception(f"Failed to delete IP {kwargs['ip']} to {kwargs['interface']}.{kwargs['vlanid']}")
+            self.logger.error(
+                f"Failed to delete IP {kwargs['ip']} to {kwargs['interface']}.{kwargs['vlanid']}"
+            )
+            raise Exception(
+                f"Failed to delete IP {kwargs['ip']} to {kwargs['interface']}.{kwargs['vlanid']}"
+            )
 
 
 class IPCmd:
     """IP CMD Executor API"""
+
     def __init__(self):
         self.active = False
         self.config = {}
@@ -235,17 +292,19 @@ class IPCmd:
     def generateFrrDict(self):
         """Generate all Vlan Info for comparison with SENSE FE Entries"""
         for ipr in [4, 6]:
-            result = subprocess.run(['ip', '-o', f'-{ipr}', 'addr', 'show'], capture_output=True, text=True)
+            result = subprocess.run(
+                ["ip", "-o", f"-{ipr}", "addr", "show"], capture_output=True, text=True
+            )
             for line in result.stdout.splitlines():
                 iface = line.split()[1]
-                ifacespl = iface.split('.')
+                ifacespl = iface.split(".")
                 if len(ifacespl) == 2:
-                    inD = self.config.setdefault(f'Vlan{ifacespl[1]}', {})
-                    inT = inD.setdefault('tagged_members', [])
+                    inD = self.config.setdefault(f"Vlan{ifacespl[1]}", {})
+                    inT = inD.setdefault("tagged_members", [])
                     if iface not in inT:
                         inT.append(iface)
-                    inIP = inD.setdefault('ips', [])
-                    ip_with_mask =normalizeIPAddress(line.split()[3])
+                    inIP = inD.setdefault("ips", [])
+                    ip_with_mask = normalizeIPAddress(line.split()[3])
                     if ip_with_mask not in inIP:
                         inIP.append(ip_with_mask)
 
@@ -257,10 +316,14 @@ class IPCmd:
                 self.needRefresh = True
                 return
             except Exception as ex:
-                self.logger.warning(f"Failed to execute command {cmd}. Retries left: {retries}. Exception: {ex}")
+                self.logger.warning(
+                    f"Failed to execute command {cmd}. Retries left: {retries}. Exception: {ex}"
+                )
                 retries -= 1
                 if not retries:
-                    self.logger.error(f"Failed to execute command {cmd}. Exception: {ex}")
+                    self.logger.error(
+                        f"Failed to execute command {cmd}. Exception: {ex}"
+                    )
                     raise ex
                 time.sleep(1)
 
@@ -282,9 +345,11 @@ class IPCmd:
     def _confVlan(self, **kwargs):
         """Configure Vlan with MTU and TXQUEUELEN"""
         self.__refreshConfig()
-        for cmd in [f"sudo ip link set dev {kwargs['interface']}.{kwargs['vlanid']} up",
-                    f"sudo ip link set dev {kwargs['interface']}.{kwargs['vlanid']} mtu {defmtu}",
-                    f"sudo ip link set dev {kwargs['interface']}.{kwargs['vlanid']} txqueuelen {deftxqueuelen}"]:
+        for cmd in [
+            f"sudo ip link set dev {kwargs['interface']}.{kwargs['vlanid']} up",
+            f"sudo ip link set dev {kwargs['interface']}.{kwargs['vlanid']} mtu {defmtu}",
+            f"sudo ip link set dev {kwargs['interface']}.{kwargs['vlanid']} txqueuelen {deftxqueuelen}",
+        ]:
             self.__executeCommand(cmd)
 
     def addIP(self, **kwargs):
@@ -301,8 +366,10 @@ class IPCmd:
         self.delIP(**kwargs)
         self.__refreshConfig()
         if kwargs["vlan"] in self.config:
-            for cmd in [f"sudo ip link set dev {kwargs['interface']}.{kwargs['vlanid']} down",
-                        f"sudo ip link delete dev {kwargs['interface']}.{kwargs['vlanid']}"]:
+            for cmd in [
+                f"sudo ip link set dev {kwargs['interface']}.{kwargs['vlanid']} down",
+                f"sudo ip link delete dev {kwargs['interface']}.{kwargs['vlanid']}",
+            ]:
                 self.__executeCommand(cmd)
 
     def delIP(self, **kwargs):
@@ -313,7 +380,9 @@ class IPCmd:
             try:
                 self.__executeCommand(cmd)
             except Exception as ex:
-                self.logger.warning(f"Failed to delete IP {kwargs['ip']} from {kwargs['interface']}.{kwargs['vlanid']}. Exception: {ex}")
+                self.logger.warning(
+                    f"Failed to delete IP {kwargs['ip']} from {kwargs['interface']}.{kwargs['vlanid']}. Exception: {ex}"
+                )
                 # This can fail if whole interface is deleted and not IP is changed.
                 # In case of IP change - this will not except.
         else:
@@ -344,10 +413,10 @@ class FrrCmd:
         """Del Vlan if present. Del All Members, IPs too (required)"""
         self.controller.delVlan(**kwargs)
 
-
     def delIP(self, **kwargs):
         """Del IP if not present"""
         self.controller.delIP(**kwargs)
+
 
 class vtyshParser:
     """Vtysh running config parser"""
@@ -438,17 +507,17 @@ class vtyshParser:
             self.regexes["ipv4-prefix-list"], self.stdout[incr].strip(), re.M
         )
         if match:
-            prefList["ipv4"].setdefault(match[1], {})[
-                normalizeIPAddress(match[3])
-            ] = match[2]
+            prefList["ipv4"].setdefault(match[1], {})[normalizeIPAddress(match[3])] = (
+                match[2]
+            )
             return incr
         match = re.search(
             self.regexes["ipv6-prefix-list"], self.stdout[incr].strip(), re.M
         )
         if match:
-            prefList["ipv6"].setdefault(match[1], {})[
-                normalizeIPAddress(match[3])
-            ] = match[2]
+            prefList["ipv6"].setdefault(match[1], {})[normalizeIPAddress(match[3])] = (
+                match[2]
+            )
         return incr
 
     def parserRouteMap(self, incr):
@@ -514,7 +583,7 @@ class vtyshConfigure:
                     normIP = normalizeIPAddress(iprange)
                     out = {"iptype": iptype, "name": prefName, "iprange": iprange}
                     if normIP in parser.running_config.get("prefix-list", {}).get(
-                            iptype, {}
+                        iptype, {}
                     ).get(prefName, {}):
                         if prefState == "absent":
                             genCmd(out, noCmd=True)
@@ -552,7 +621,7 @@ class vtyshConfigure:
                             "match": rName,
                         }
                         if out["match"] in parser.running_config.get(
-                                "route-map", {}
+                            "route-map", {}
                         ).get(out["name"], {}).get(out["permit"], {}):
                             if rState == "absent":
                                 genCmd(out, True)
@@ -575,12 +644,12 @@ class vtyshConfigure:
             for netw, netstate in newConf.get(f"{key}_network", {}).items():
                 netwNorm = normalizeIPAddress(netw.split("/")[0])
                 if (
-                        netwNorm
-                        in parser.running_config.get("bgp", {})
-                        .get("address-family", {})
-                        .get(key, {})
-                        .get("network", {})
-                        and netstate == "present"
+                    netwNorm
+                    in parser.running_config.get("bgp", {})
+                    .get("address-family", {})
+                    .get(key, {})
+                    .get("network", {})
+                    and netstate == "present"
                 ):
                     continue
                 # At this point it is not defined
@@ -597,24 +666,34 @@ class vtyshConfigure:
                 if ipNorm in parser.running_config.get("bgp", {}).get("neighbor", {}):
                     if neighDict["state"] == "absent":
                         self.commands.append(f" address-family {key} unicast")
-                        self.commands.append(f"  no neighbor {ipNorm} remote-as {neighDict['remote_asn']}")
+                        self.commands.append(
+                            f"  no neighbor {ipNorm} remote-as {neighDict['remote_asn']}"
+                        )
                         continue
                 elif neighDict["state"] == "present":
                     # It is present in new config, but not present on router. Add it
                     self.commands.append(f" address-family {key} unicast")
-                    self.commands.append(f"  neighbor {ipNorm} remote-as {neighDict['remote_asn']}")
+                    self.commands.append(
+                        f"  neighbor {ipNorm} remote-as {neighDict['remote_asn']}"
+                    )
                     # Adding remote-as will exit address family. Need to enter it again
                     self.commands.append(f" address-family {key} unicast")
                     self.commands.append(f"  neighbor {ipNorm} activate")
-                    self.commands.append(f"  neighbor {ipNorm} soft-reconfiguration inbound")
+                    self.commands.append(
+                        f"  neighbor {ipNorm} soft-reconfiguration inbound"
+                    )
                     for rtype in ["in", "out"]:
                         for rName, rState in (
-                                neighDict.get("route_map", {}).get(rtype, {}).items()
+                            neighDict.get("route_map", {}).get(rtype, {}).items()
                         ):
                             if rState == "present":
-                                self.commands.append(f"  neighbor {ipNorm} route-map {rName} {rtype}")
+                                self.commands.append(
+                                    f"  neighbor {ipNorm} route-map {rName} {rtype}"
+                                )
                             elif rState == "absent":
-                                self.commands.append(f"  no neighbor {ipNorm} route-map {rName} {rtype}")
+                                self.commands.append(
+                                    f"  no neighbor {ipNorm} route-map {rName} {rtype}"
+                                )
                     self.commands.append(" exit-address-family")
         if len(self.commands) == 1:
             # means only router to configure. Skip it.
@@ -712,6 +791,7 @@ class Main:
             self.logger.deleteRunContent()
             return exitCode, stdout
 
+
 def getVtyshCmd():
     """Detect whether to use local vtysh or docker exec."""
     _, _, exitCode = externalCommand("vtysh -c 'show version'")
@@ -721,6 +801,7 @@ def getVtyshCmd():
     if exitCode == 0:
         return "docker exec -i frr vtysh"
     raise RuntimeError("Neither vtysh nor docker exec -i frr vtysh is available!")
+
 
 def getVppctlCmd():
     """Detect whether to use local vppctl or docker exec."""
@@ -744,5 +825,9 @@ if __name__ == "__main__":
     main = Main()
     mainexitCode, mainstdout = main.main()
     changed = "ok" if mainexitCode == 0 else "failed"
-    print(json.dumps({"changed": changed, "rc": mainexitCode, "stdout": "\n".join(mainstdout)}))
+    print(
+        json.dumps(
+            {"changed": changed, "rc": mainexitCode, "stdout": "\n".join(mainstdout)}
+        )
+    )
     sys.exit(mainexitCode)
