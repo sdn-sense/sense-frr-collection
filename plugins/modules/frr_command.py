@@ -62,6 +62,51 @@ def loadJson(infile):
                 out[splline[0]] = strtojson(splline[1])
     return out
 
+
+def normalizeBgpState(rawstate):
+    """Normalize a vendor BGP FSM state string to the shared enum."""
+    known = ("established", "idle", "active", "connect", "opensent", "openconfirm")
+    state = str(rawstate).lower()
+    return state if state in known else "unknown"
+
+
+def normalizeBgpSummary(rawjson, wantafis):
+    """Normalize FRR/SONiC 'show bgp summary json' (vtysh) output into the
+    shared SiteRM BGP schema: {"vrf": ..., "afi_checked": [...], "peers": [...]}.
+    Both FRR and SONiC vtysh share the exact same JSON shape, so this
+    function is intentionally duplicated verbatim in sonic_command.py rather
+    than shared across collections."""
+    try:
+        data = json.loads(rawjson)
+    except ValueError as ex:
+        raise Exception(f"Failed to parse BGP summary JSON output. Exception {ex}") from ex
+    out = {"vrf": None, "afi_checked": [], "peers": []}
+    afimap = {"ipv4": "ipv4Unicast", "ipv6": "ipv6Unicast"}
+    for iptype, afikey in afimap.items():
+        if iptype not in wantafis:
+            continue
+        afidata = data.get(afikey)
+        if not afidata:
+            continue
+        out["afi_checked"].append(iptype)
+        if out["vrf"] is None:
+            out["vrf"] = afidata.get("vrfName")
+        for peeraddr, peerdata in afidata.get("peers", {}).items():
+            uptimemsec = peerdata.get("peerUptimeMsec", 0) or 0
+            out["peers"].append({
+                "peer": peeraddr,
+                "iptype": peerdata.get("idType", iptype),
+                "local_asn": peerdata.get("localAs"),
+                "remote_asn": peerdata.get("remoteAs"),
+                "state": normalizeBgpState(peerdata.get("state", "")),
+                "uptime_seconds": int(uptimemsec // 1000),
+                "prefixes_received": peerdata.get("pfxRcd"),
+                "prefixes_advertised": peerdata.get("pfxSnt"),
+                "advertised_known": True,
+            })
+    return out
+
+
 class Main:
     """Main Frr Class"""
     def __init__(self):
@@ -69,6 +114,7 @@ class Main:
         self.module_stdout = []
         self.module_stderr = []
         self.rc = 0
+        self.bgp_summary = {}
 
     def log_out(self, out):
         """Log all output to stdout and stderr. Set RC code of command exit"""
@@ -125,6 +171,23 @@ class Main:
             raise Exception(f"Failed execute command {traceroute_command}. Exception {ex}") from ex
         self.log_out(out)
 
+    def execute_bgpsummary(self, bgpconf):
+        """Execute BGP summary command (vtysh) and normalize the output"""
+        bgpconf = bgpconf or {}
+        vrf = bgpconf.get('vrf', '') or ''
+        wanttype = bgpconf.get('type', 'both') or 'both'
+        wantafis = ['ipv4', 'ipv6'] if wanttype == 'both' else [wanttype]
+        if vrf:
+            command = f'vtysh -c "show bgp vrf {vrf} summary json"'
+        else:
+            command = 'vtysh -c "show bgp summary json"'
+        try:
+            out = externalCommand(command)
+        except Exception as ex:
+            raise Exception(f"Failed execute command {command}. Exception {ex}") from ex
+        self.log_out(out)
+        self.bgp_summary = normalizeBgpSummary(out[0].decode("utf-8"), wantafis)
+
     def execute(self, action):
         """Main execute"""
         senseconfig = loadJson(self.args[action])
@@ -134,6 +197,9 @@ class Main:
         elif action == "traceroute":
             self.module_stdout.append(f"Execute traceroute: {senseconfig.get('TRACEROUTE', None)}")
             self.execute_traceroute(senseconfig.get('TRACEROUTE', None))
+        elif action == "bgpsummary":
+            self.module_stdout.append(f"Execute bgpsummary: {senseconfig.get('BGPSUMMARY', None)}")
+            self.execute_bgpsummary(senseconfig.get('BGPSUMMARY', None))
         else:
             self.module_stderr.append(f"Unknown action {action}")
             raise Exception(f"Unknown action {action}")
@@ -144,7 +210,8 @@ class Main:
             raise Exception("Input File from param does not exist on Device.")
         params = {"debug": r"frr_debug=(\S+)",
                   "ping": r"frr_ping=(\S+)",
-                  "traceroute": r"frr_traceroute=(\S+)"}
+                  "traceroute": r"frr_traceroute=(\S+)",
+                  "bgpsummary": r"frr_bgpsummary=(\S+)"}
         args = {}
         with open(inFile, "r", encoding="utf-8") as fd:
             tmptxt = fd.read()
@@ -168,6 +235,10 @@ class Main:
             self.module_stdout.append(self.args["traceroute"])
             self.module_stderr.append(self.args["traceroute"])
             action = "traceroute"
+        elif self.args.get("bgpsummary", None):
+            self.module_stdout.append(self.args["bgpsummary"])
+            self.module_stderr.append(self.args["bgpsummary"])
+            action = "bgpsummary"
         else:
             self.module_stderr.append(f"Issue with parsing input config. Input: {sys.argv}")
             raise Exception(f"Issue with parsing input config. Input: {sys.argv}")
@@ -179,7 +250,7 @@ class Main:
         except Exception as ex:
             self.module_stderr.append(f"Received exception running script. Ex: {ex}")
             self.rc = 1
-        out = {'stdout': listtostr(self.module_stdout), 'stderr': listtostr(self.module_stderr), 'rc': self.rc, 'changed': False}
+        out = {'stdout': listtostr(self.module_stdout), 'stderr': listtostr(self.module_stderr), 'rc': self.rc, 'changed': False, 'bgp_summary': self.bgp_summary}
         print(json.dumps(out))
 
 
