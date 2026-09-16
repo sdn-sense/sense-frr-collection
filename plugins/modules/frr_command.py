@@ -29,6 +29,21 @@ def externalCommand(command):
     return ["", "", -1]
 
 
+def getVtyshCmd():
+    """Detect whether vtysh runs directly on this host or only inside a
+    'frr' docker container (VPP-based FRR deployments, e.g. CERN)."""
+    try:
+        externalCommand("vtysh -c 'show version'")
+        return "vtysh"
+    except Exception:  # pylint: disable=broad-except
+        pass
+    try:
+        externalCommand("docker exec -i frr vtysh -c 'show version'")
+        return "docker exec -i frr vtysh"
+    except Exception as ex:
+        raise Exception("Neither vtysh nor docker exec -i frr vtysh is available") from ex
+
+
 def strtojson(intxt):
     """str to json function"""
     out = {}
@@ -177,10 +192,11 @@ class Main:
         vrf = bgpconf.get('vrf', '') or ''
         wanttype = bgpconf.get('type', 'both') or 'both'
         wantafis = ['ipv4', 'ipv6'] if wanttype == 'both' else [wanttype]
+        vtyshcmd = getVtyshCmd()
         if vrf:
-            command = f'vtysh -c "show bgp vrf {vrf} summary json"'
+            command = f'{vtyshcmd} -c "show bgp vrf {vrf} summary json"'
         else:
-            command = 'vtysh -c "show bgp summary json"'
+            command = f'{vtyshcmd} -c "show bgp summary json"'
         try:
             out = externalCommand(command)
         except Exception as ex:
