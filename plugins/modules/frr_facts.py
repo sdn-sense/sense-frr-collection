@@ -6,6 +6,7 @@ import json
 # Copyright: Contributors to the Ansible project
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -153,6 +154,35 @@ def run_commands(module, commands, check_rc):
     return output
 
 
+def externalCommand(command):
+    """Execute external command and return (stdout, stderr, exitcode).
+    Missing binaries (e.g. vppctl/docker not installed) yield exitcode 127
+    instead of raising, so callers can treat that as 'unavailable'."""
+    try:
+        proc = subprocess.Popen(
+            shlex.split(command), stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        )
+        stdout, stderr = proc.communicate()
+        return stdout.decode("utf-8"), stderr.decode("utf-8"), proc.returncode
+    except (FileNotFoundError, OSError) as ex:
+        return "", f"Error: {command} failed to execute. Exception: {ex}", 127
+
+
+def getVppctlCmd():
+    """Detect whether to use local vppctl or docker exec vpp vppctl.
+    Returns None if VPP is not reachable (e.g. a plain FRR-only router)."""
+    _, _, exitcode = externalCommand("vppctl show version")
+    if exitcode == 0:
+        return "vppctl"
+    _, _, exitcode = externalCommand("docker exec -i vpp vppctl show version")
+    if exitcode == 0:
+        return "docker exec -i vpp vppctl"
+    return None
+
+
+vppshcmd = getVppctlCmd()
+
+
 class FactsBase:
     """Base class for Facts"""
 
@@ -205,18 +235,89 @@ class Config(FactsBase):
         return out
 
 
+class VppCmd:
+    """VPP-sourced operstate lookup.
+
+    VPP is authoritative for linux-cp mirrored interfaces (e.g. 'e1'): the
+    kernel never sets IFLA_OPERSTATE for them, so their Linux operstate is
+    unreliable even though the underlying dataplane link is up.
+    """
+
+    IFACE_RE = re.compile(r"^e(\d+)(?:\.(\d+))?$")
+
+    def __init__(self):
+        self.logger = CustomLogger(logService="VPP")
+        self.active = bool(vppshcmd)
+        if self.active:
+            _, _, exitcode = externalCommand(f"sudo {vppshcmd} show version")
+            self.active = exitcode == 0
+        self._states = None
+
+    @classmethod
+    def _toVppName(cls, iface):
+        """Translate a linux-cp host-if name (eN[.vlan]) to its VPP
+        dataplane name (EthernetN/0/0[.vlan])."""
+        match = cls.IFACE_RE.match(iface)
+        if not match:
+            return None
+        idx, vlan = match.groups()
+        return f"Ethernet{idx}/0/0.{vlan}" if vlan else f"Ethernet{idx}/0/0"
+
+    def _loadStates(self):
+        """Parse 'show interface' once and cache operstatus per VPP name."""
+        if self._states is not None:
+            return
+        self._states = {}
+        stdout, _, exitcode = externalCommand(f"sudo {vppshcmd} show interface")
+        if exitcode != 0:
+            self.logger.error("Failed to run 'show interface' on VPP")
+            return
+        for line in stdout.splitlines():
+            match = re.match(r"^(\S+)\s+\d+\s+(up|down)\s+\d+", line)
+            if match:
+                self._states[match.group(1)] = match.group(2)
+
+    def getOperStatus(self, iface):
+        """Return operstatus for a linux-cp host-if name, or 'unknown' if
+        VPP has no matching interface."""
+        self._loadStates()
+        vppName = self._toVppName(iface)
+        if not vppName:
+            return "unknown"
+        return self._states.get(vppName, "unknown")
+
+
+class IPCmd:
+    """Linux/sysfs-sourced operstate lookup. Used when VPP is not active."""
+
+    def __init__(self):
+        self.active = True
+        self.logger = CustomLogger(logService="IPCmd")
+
+    def getOperStatus(self, iface):
+        """Get oper status.
+
+        Virtual devices such as VPP linux-cp host-interfaces never set
+        IFLA_OPERSTATE, so operstate stays 'unknown' even when the link is
+        up. Fall back to the carrier flag (derived from LOWER_UP) in that case.
+        """
+        operstate = "unknown"
+        if os.path.isfile(f"/sys/class/net/{iface}/operstate"):
+            with open(f"/sys/class/net/{iface}/operstate", encoding="utf-8") as fd:
+                operstate = fd.read().strip()
+        if operstate == "unknown" and os.path.isfile(f"/sys/class/net/{iface}/carrier"):
+            try:
+                with open(f"/sys/class/net/{iface}/carrier", encoding="utf-8") as fd:
+                    operstate = "up" if fd.read().strip() == "1" else "down"
+            except OSError as ex:
+                self.logger.error(f"Error reading carrier for {iface}. Error: {ex}")
+        return operstate
+
+
 class Interfaces(FactsBase):
     """All Interfaces Class"""
 
     COMMANDS = []
-
-    def _getOperStatus(self, iface):
-        """Get oper status"""
-        if os.path.isfile(f"/sys/class/net/{iface}/operstate"):
-            with open(f"/sys/class/net/{iface}/operstate", encoding="utf-8") as fd:
-                self.facts["interfaces"][iface]["operstatus"] = fd.read().strip()
-        else:
-            self.facts["interfaces"][iface]["operstatus"] = "unknown"
 
     def _getMTU(self, iface):
         """Get MTU"""
@@ -331,6 +432,10 @@ class Interfaces(FactsBase):
     def populate(self):
         super(Interfaces, self).populate()
         self.facts["interfaces"] = {}
+        self.controller = VppCmd()
+        if not self.controller.active:
+            self.logger.warning("VPP is not active. Will use IPCmd for operstate")
+            self.controller = IPCmd()
         self._getlldp("all")
         self._getroutes("all")
         for iface in os.listdir("/sys/class/net"):
@@ -338,7 +443,7 @@ class Interfaces(FactsBase):
                 continue
             self.facts["interfaces"].setdefault(iface, {})
             self._addSwitchPort(iface)
-            self._getOperStatus(iface)
+            self.facts["interfaces"][iface]["operstatus"] = self.controller.getOperStatus(iface)
             self._getMTU(iface)
             self._getTxQueueLen(iface)
             self._getSpeed(iface)
